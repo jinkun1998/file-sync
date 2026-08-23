@@ -1,0 +1,11 @@
+[Unit]
+Description=Git storage backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__STORAGE_USER__
+Group=__STORAGE_GROUP__
+EnvironmentFile=-/etc/file-sync-backup.conf
+ExecStart=/usr/local/lib/file-sync-backup/backup.sh

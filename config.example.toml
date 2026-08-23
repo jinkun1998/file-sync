@@ -1,0 +1,13 @@
+# Copy to ~/.config/file-sync/config.toml. SSH keys/agents only; never passwords here.
+[connection]
+# Prefer an SSH config alias with Host, IdentityFile, and known_hosts already configured.
+host = "storage-server"
+user = "thaodlq"
+ssh_options = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+
+[defaults]
+base_path = "/mnt/hdd/fw/thaodlq2/storage"
+minimum_free_gb = 10
+retries = 2
+excludes = [".DS_Store", "Thumbs.db", "__pycache__/"]
+rsync_options = []

@@ -1,0 +1,10 @@
+[Unit]
+Description=Every 18 hours file-sync Git backups
+
+[Timer]
+OnBootSec=18h
+OnUnitActiveSec=18h
+Unit=storage-backup.service
+
+[Install]
+WantedBy=timers.target
