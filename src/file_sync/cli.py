@@ -241,8 +241,11 @@ def estimate_bytes(source: dict[str, str], paths: list[str]) -> int:
     return sum(int(source[path].split(":", 2)[1]) for path in paths if source[path].startswith("F:"))
 
 
-def format_mb(byte_count: int) -> str:
-    return f"{byte_count / 1_000_000:.2f} MB"
+def format_size(byte_count: int) -> str:
+    for divisor, unit in ((1_000_000_000, "GB"), (1_000_000, "MB"), (1_000, "KB")):
+        if byte_count >= divisor:
+            return f"{byte_count / divisor:.2f} {unit}"
+    return f"{byte_count} bytes"
 
 
 def free_bytes_remote(config: Config) -> int:
@@ -351,7 +354,7 @@ def sync_folder(config: Config, target: Target, direction: str, dry_run: bool) -
     pc_parent = target.local.parent if target.local.parent.exists() else Path.home()
     available = shutil.disk_usage(pc_parent).free if direction == "pull" else free_bytes_remote(config)
     require_space(available, transfer, config, "PC" if direction == "pull" else "server")
-    summary = f"{direction} {target.remote}: copy/update={len(copies)} skip={skipped} conflicts={len(conflicts)} delete=0 estimate={format_mb(transfer)} ({transfer} bytes)"
+    summary = f"{direction} {target.remote}: copy/update={len(copies)} skip={skipped} conflicts={len(conflicts)} delete=0 estimate={format_size(transfer)} ({transfer} bytes)"
     if conflicts:
         detail = "\n".join(conflicts[:50])
         log_operation(f"{direction}-{hashlib.sha256(target.remote.encode()).hexdigest()[:12]}", summary + "\nCONFLICTS:\n" + detail)
