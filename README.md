@@ -31,6 +31,8 @@ file-sync config check
 
 `[folders.*]` is unsupported. TOML holds connection, server base path, exclusions, retries, free-space reserve, and `rsync` options only.
 
+During a real push or pull, the CLI reports repository preparation, file scanning, conflict/free-space checks, transfer progress, verification, and baseline saving. Interactive terminals show an animated transfer spinner; redirected output prints a plain `push: syncing` or `pull: syncing` state.
+
 ## Safety
 
 - Server traversal, `.git`, sync state, partial, registry paths rejected.
