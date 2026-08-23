@@ -112,6 +112,17 @@ class SyncSafetyTests(unittest.TestCase):
     def test_registry_script_is_deduplicated_and_order_preserving(self) -> None:
         self.assertIn('grep -Fqx -- "$repo" "$registry" || printf', cli.REPOSITORY_SCRIPT)
 
+    def test_git_clone_fallback_allows_data_sync_without_backup(self) -> None:
+        target = cli.Target(Path("/tmp/anyka"), "models/anyka", ())
+        result = subprocess.CompletedProcess([], 0, "fallback\n", "connection timed out")
+        output = io.StringIO()
+        with patch.object(cli, "local_repository", return_value=(Path("/tmp/anyka"), "models/anyka", "git@git.fpt.net:anyka.git", "main")), patch.object(cli, "run_remote", return_value=result), contextlib.redirect_stderr(output):
+            self.assertFalse(cli.prepare_server_repository(self.config(), target))
+        self.assertIn("syncing data without Server Git backup", output.getvalue())
+
+    def test_existing_non_git_repository_root_is_marked_unmanaged(self) -> None:
+        self.assertIn('grep -Fqx -- "$repo" "$fallback" || printf', cli.REPOSITORY_SCRIPT)
+
     def test_log_is_written(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.object(cli, "STATE", Path(directory)):
             path = cli.log_operation("push-models", "exit=0")

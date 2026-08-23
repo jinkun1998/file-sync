@@ -45,7 +45,7 @@ During a real push or pull, the CLI reports repository preparation, file scannin
 
 On a push from a local Git worktree, `file-sync` derives its root and matching Server root. For example, a local `models/anyka/2026_model` worktree rooted at `models/anyka` maps to Server repository `models/anyka`.
 
-If that Server root is absent, it clones the local `origin` active branch before syncing. An existing non-Git directory fails safely. Each discovered repository is registered once, in first-push order, for scheduled backup.
+If that Server root is absent, it clones the local `origin` active branch before syncing. If cloning is unavailable or the root is already non-Git, data still syncs and the root is marked unmanaged; scheduled Server Git backup skips it. This preserves Server data, but Git backup requires repairing or migrating that repository later. Each cloned repository is registered once, in first-push order, for scheduled backup.
 
 ## Server setup
 

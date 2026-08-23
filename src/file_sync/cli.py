@@ -329,16 +329,31 @@ REPOSITORY_SCRIPT = r'''set -eu
 base=$1 repo_relative=$2 origin=$3 branch=$4
 repo=$base/$repo_relative
 registry=$base/.file-sync-state/repositories
+fallback=$base/.file-sync-state/unmanaged-repositories
 created=0
 case $repo in "$base"/*) ;; *) echo "unsafe repository path" >&2; exit 2 ;; esac
 if [ -e "$repo" ] && [ ! -d "$repo/.git" ]; then
-  echo "required repository root exists but is not a Git worktree: $repo" >&2
-  exit 2
+  mkdir -p -- "$(dirname -- "$fallback")"
+  touch "$fallback"
+  grep -Fqx -- "$repo" "$fallback" || printf '%s\n' "$repo" >> "$fallback"
+  printf '%s\n' fallback
+  exit 0
 fi
 if [ ! -e "$repo" ]; then
-  mkdir -p -- "$(dirname -- "$repo")"
-  git clone --branch "$branch" --single-branch -- "$origin" "$repo"
-  created=1
+  parent=$(dirname -- "$repo")
+  mkdir -p -- "$parent"
+  temporary=$(mktemp -d "$parent/.file-sync-clone.XXXXXX")
+  trap 'rm -rf -- "$temporary"' EXIT
+  if git clone --branch "$branch" --single-branch -- "$origin" "$temporary/repository"; then
+    mv -- "$temporary/repository" "$repo"
+    created=1
+  else
+    mkdir -p -- "$(dirname -- "$fallback")"
+    touch "$fallback"
+    grep -Fqx -- "$repo" "$fallback" || printf '%s\n' "$repo" >> "$fallback"
+    printf '%s\n' fallback
+    exit 0
+  fi
 fi
 git -C "$repo" rev-parse --is-inside-work-tree >/dev/null
 git -C "$repo" config user.name "Storage Backup"
@@ -355,7 +370,17 @@ def prepare_server_repository(config: Config, target: Target) -> bool:
     if repository is None:
         return False
     _, remote_relative, origin, branch = repository
-    return run_remote(config, REPOSITORY_SCRIPT, config.base_path, remote_relative, origin, branch).stdout.strip() == "1"
+    result = run_remote(config, REPOSITORY_SCRIPT, config.base_path, remote_relative, origin, branch, check=False)
+    if result.returncode:
+        fail(f"Server Git setup failed ({result.returncode}): {result.stderr.strip() or result.stdout.strip()}")
+    if result.stdout.strip() == "fallback":
+        print("file-sync: warning: Server Git clone unavailable; syncing data without Server Git backup", file=sys.stderr)
+        return False
+    return result.stdout.strip() == "1"
+
+
+def ensure_remote_directory(config: Config, target: Target) -> None:
+    run_remote(config, 'set -eu\nmkdir -p -- "$1"\n', remote_root(config, target))
 
 
 def sync_folder(config: Config, target: Target, direction: str, dry_run: bool) -> int:
@@ -367,6 +392,7 @@ def sync_folder(config: Config, target: Target, direction: str, dry_run: bool) -
     if direction == "push" and not dry_run:
         report_state(direction, "preparing server repository")
         cloned = prepare_server_repository(config, target)
+        ensure_remote_directory(config, target)
     else:
         cloned = False
     if direction == "pull" and not target.local.exists() and not dry_run:
