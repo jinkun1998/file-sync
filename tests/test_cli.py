@@ -45,6 +45,9 @@ class SyncSafetyTests(unittest.TestCase):
         second = cli.Target(Path("/tmp/a"), "apical/a", ())
         self.assertNotEqual(cli.state_path(config, first), cli.state_path(config, second))
 
+    def test_estimate_is_displayed_in_decimal_mb(self) -> None:
+        self.assertEqual(cli.format_mb(1_101_698_401), "1101.70 MB")
+
     def test_excludes_match_directory_and_basename(self) -> None:
         patterns = ("__pycache__/", "*.tmp")
         self.assertTrue(cli.excluded("pkg/__pycache__/a.pyc", patterns))
