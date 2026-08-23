@@ -51,6 +51,16 @@ class SyncSafetyTests(unittest.TestCase):
         self.assertEqual(cli.format_size(1_234_567), "1.23 MB")
         self.assertEqual(cli.format_size(1_101_698_401), "1.10 GB")
 
+    def test_rsync_reports_state_without_a_terminal(self) -> None:
+        process = unittest.mock.Mock()
+        process.returncode = 0
+        process.communicate.return_value = ("copied", "")
+        output = io.StringIO()
+        with patch.object(cli.subprocess, "Popen", return_value=process), patch.object(cli.sys.stderr, "isatty", return_value=False), contextlib.redirect_stderr(output):
+            result = cli.run_rsync(["rsync"], "push")
+        self.assertEqual(result.stdout, "copied")
+        self.assertIn("push: syncing", output.getvalue())
+
     def test_excludes_match_directory_and_basename(self) -> None:
         patterns = ("__pycache__/", "*.tmp")
         self.assertTrue(cli.excluded("pkg/__pycache__/a.pyc", patterns))

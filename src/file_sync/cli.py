@@ -282,6 +282,29 @@ def log_operation(name: str, body: str) -> Path:
     return path
 
 
+def report_state(direction: str, state: str) -> None:
+    print(f"{direction}: {state}", file=sys.stderr)
+
+
+def run_rsync(command: list[str], direction: str) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if not sys.stderr.isatty():
+        report_state(direction, "syncing")
+        stdout, stderr = process.communicate()
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    frames = "|/-\\"
+    frame = 0
+    while process.poll() is None:
+        sys.stderr.write(f"\r{direction}: syncing {frames[frame % len(frames)]}")
+        sys.stderr.flush()
+        frame += 1
+        time.sleep(0.15)
+    stdout, stderr = process.communicate()
+    sys.stderr.write("\r" + " " * (len(direction) + 11) + "\r")
+    sys.stderr.flush()
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
 def local_repository(target: Target) -> tuple[Path, str, str, str] | None:
     result = subprocess.run(["git", "-C", str(target.local), "rev-parse", "--show-toplevel"], text=True, capture_output=True)
     if result.returncode:
@@ -341,9 +364,14 @@ def sync_folder(config: Config, target: Target, direction: str, dry_run: bool) -
         fail(f"local source directory missing: {target.local}")
     if direction == "pull" and target.local.exists() and not target.local.is_dir():
         fail(f"local destination is not a directory: {target.local}")
-    cloned = direction == "push" and not dry_run and prepare_server_repository(config, target)
+    if direction == "push" and not dry_run:
+        report_state(direction, "preparing server repository")
+        cloned = prepare_server_repository(config, target)
+    else:
+        cloned = False
     if direction == "pull" and not target.local.exists() and not dry_run:
         target.local.mkdir(parents=True)
+    report_state(direction, "scanning files")
     local, remote = local_manifest(target.local, target.excludes), remote_manifest(config, target)
     baseline = load_baseline(config, target)
     if cloned and baseline is None:
@@ -351,6 +379,7 @@ def sync_folder(config: Config, target: Target, direction: str, dry_run: bool) -
     source, destination = (local, remote) if direction == "push" else (remote, local)
     copies, conflicts, skipped = classify(source, destination, baseline)
     transfer = estimate_bytes(source, copies)
+    report_state(direction, "checking conflicts and free space")
     pc_parent = target.local.parent if target.local.parent.exists() else Path.home()
     available = shutil.disk_usage(pc_parent).free if direction == "pull" else free_bytes_remote(config)
     require_space(available, transfer, config, "PC" if direction == "pull" else "server")
@@ -365,21 +394,24 @@ def sync_folder(config: Config, target: Target, direction: str, dry_run: bool) -
     command = rsync_command(config, target, direction, False)
     result: subprocess.CompletedProcess[str] | None = None
     for attempt in range(config.retries + 1):
-        result = subprocess.run(command, text=True, capture_output=True)
+        result = run_rsync(command, direction)
         if result.returncode == 0:
             break
         if attempt < config.retries:
+            report_state(direction, f"retrying in {2**attempt}s")
             time.sleep(2**attempt)
     assert result is not None
     elapsed = time.monotonic() - started
     log_path = log_operation(f"{direction}-{hashlib.sha256(target.remote.encode()).hexdigest()[:12]}", f"{summary}\nduration={elapsed:.1f}s\nexit={result.returncode}\ncommand={shlex.join(command)}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}")
     if result.returncode:
         fail(f"rsync failed after {config.retries + 1} attempt(s); log: {log_path}")
+    report_state(direction, "verifying transfer")
     remote_after = remote_manifest(config, target)
     if direction == "push":
         missing = [path for path in copies if remote_after.get(path) != local.get(path)]
         if missing:
             fail("post-push verification failed: " + ", ".join(missing[:20]))
+    report_state(direction, "saving conflict baseline")
     save_baseline(config, target, remote_after)
     print(f"{summary}\ncompleted in {elapsed:.1f}s; log: {log_path}")
     return 0
