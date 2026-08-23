@@ -51,15 +51,15 @@ class SyncSafetyTests(unittest.TestCase):
         self.assertEqual(cli.format_size(1_234_567), "1.23 MB")
         self.assertEqual(cli.format_size(1_101_698_401), "1.10 GB")
 
-    def test_rsync_reports_state_without_a_terminal(self) -> None:
+    def test_rsync_reports_percentage_without_a_terminal(self) -> None:
         process = unittest.mock.Mock()
-        process.returncode = 0
-        process.communicate.return_value = ("copied", "")
+        process.stdout = io.StringIO("  1,024  42%  1.00MB/s  0:00:01\rcopied\n")
+        process.wait.return_value = 0
         output = io.StringIO()
-        with patch.object(cli.subprocess, "Popen", return_value=process), patch.object(cli.sys.stderr, "isatty", return_value=False), contextlib.redirect_stderr(output):
+        with patch.object(cli.subprocess, "Popen", return_value=process), contextlib.redirect_stderr(output):
             result = cli.run_rsync(["rsync"], "push")
-        self.assertEqual(result.stdout, "copied")
-        self.assertIn("push: syncing", output.getvalue())
+        self.assertIn("42%", result.stdout)
+        self.assertIn("push: syncing 42%", output.getvalue())
 
     def test_excludes_match_directory_and_basename(self) -> None:
         patterns = ("__pycache__/", "*.tmp")
@@ -86,6 +86,36 @@ class SyncSafetyTests(unittest.TestCase):
         self.assertEqual(conflicts, [])
         self.assertEqual(skipped, 1)
         self.assertIn("B.txt", baseline)
+
+    def test_real_rsync_reports_whole_transfer_progress(self) -> None:
+        target = cli.Target(Path("/tmp/models"), "models", ())
+        command = cli.rsync_command(self.config(), target, "push", False)
+        self.assertIn("--info=progress2", command)
+        self.assertIn("--partial-dir=.file-sync-partial", command)
+        self.assertIn("--delay-updates", command)
+
+    def test_dry_run_does_not_emit_progress(self) -> None:
+        target = cli.Target(Path("/tmp/models"), "models", ())
+        self.assertNotIn("--info=progress2", cli.rsync_command(self.config(), target, "push", True))
+
+    def test_progress_percent_accepts_rsync_progress_only(self) -> None:
+        self.assertEqual(cli.progress_percent("  1,024  42%  1.00MB/s  0:00:01"), 42)
+        self.assertIsNone(cli.progress_percent("rsync: warning: retrying"))
+        self.assertIsNone(cli.progress_percent("101%"))
+
+    def test_rsync_diagnostic_is_a_warning(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stderr(output):
+            self.assertEqual(cli.report_rsync_output("push", "rsync: warning: transient metadata issue\n", -1), -1)
+        self.assertIn("file-sync: warning:", output.getvalue())
+
+    def test_remote_destination_must_resolve_under_storage_root(self) -> None:
+        target = cli.Target(Path("/tmp/models"), "models", ())
+        with patch.object(cli, "run_remote") as run_remote:
+            cli.ensure_remote_directory(self.config(), target)
+        script = run_remote.call_args.args[1]
+        self.assertIn('base=$(realpath -e -- "$1")', script)
+        self.assertIn('case $resolved in "$base"/*)', script)
 
     def test_git_metadata_is_forced_excluded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

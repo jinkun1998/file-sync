@@ -31,7 +31,7 @@ file-sync config check
 
 `[folders.*]` is unsupported. TOML holds connection, server base path, exclusions, retries, free-space reserve, and `rsync` options only.
 
-During a real push or pull, the CLI reports repository preparation, file scanning, conflict/free-space checks, transfer progress, verification, and baseline saving. Interactive terminals show an animated transfer spinner; redirected output prints a plain `push: syncing` or `pull: syncing` state.
+During a real push or pull, the CLI reports repository preparation, file scanning, conflict/free-space checks, `rsync` whole-transfer percentage, verification, and baseline saving. Non-fatal `rsync` diagnostics print as warnings. Failed transfers still fail: the command only succeeds after every planned push file is verified on the server.
 
 ## Safety
 
@@ -39,6 +39,7 @@ During a real push or pull, the CLI reports repository preparation, file scannin
 - `.git/` always excluded from transfer. Local and server Git metadata remain independent.
 - Existing same-path differences abort. First sync requires an empty destination unless a Server Git clone was just created.
 - Baselines use the full server destination. Pull and push are additive.
+- Transfers use `rsync --partial-dir` and `--delay-updates`: incomplete files stay in the private partial directory; completed files are promoted atomically. Server destinations resolving outside `[defaults].base_path` are rejected.
 - Logs: `~/.local/state/file-sync/logs/`.
 
 ## Server repositories

@@ -6,6 +6,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -23,6 +24,7 @@ REMOTE_STATE = ".file-sync-state"
 PARTIAL = ".file-sync-partial"
 REGISTRY = ".file-sync-repositories"
 RESERVED = {REMOTE_STATE, PARTIAL, REGISTRY, ".git"}
+PROGRESS_PERCENT = re.compile(r"(?<!\d)(\d{1,3})%(?!\d)")
 
 
 class SyncError(RuntimeError):
@@ -270,6 +272,8 @@ def rsync_command(config: Config, target: Target, direction: str, dry_run: bool)
     command.extend(f"--exclude={pattern}" for pattern in target.excludes)
     if dry_run:
         command.append("--dry-run")
+    else:
+        command.append("--info=progress2")
     command.extend([str(target.local) + "/", remote] if direction == "push" else [remote, str(target.local) + "/"])
     return command
 
@@ -286,23 +290,36 @@ def report_state(direction: str, state: str) -> None:
     print(f"{direction}: {state}", file=sys.stderr)
 
 
+def progress_percent(output: str) -> int | None:
+    match = PROGRESS_PERCENT.search(output)
+    return int(match.group(1)) if match and int(match.group(1)) <= 100 else None
+
+
+def report_rsync_output(direction: str, output: str, last_percent: int) -> int:
+    percent = progress_percent(output)
+    if percent is not None and percent != last_percent:
+        report_state(direction, f"syncing {percent}%")
+        return percent
+    if output.strip() and (output.lstrip().startswith("rsync:") or "warning" in output.lower()):
+        print(f"{APP}: warning: {output.strip()}", file=sys.stderr)
+    return last_percent
+
+
 def run_rsync(command: list[str], direction: str) -> subprocess.CompletedProcess[str]:
-    process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if not sys.stderr.isatty():
-        report_state(direction, "syncing")
-        stdout, stderr = process.communicate()
-        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-    frames = "|/-\\"
-    frame = 0
-    while process.poll() is None:
-        sys.stderr.write(f"\r{direction}: syncing {frames[frame % len(frames)]}")
-        sys.stderr.flush()
-        frame += 1
-        time.sleep(0.15)
-    stdout, stderr = process.communicate()
-    sys.stderr.write("\r" + " " * (len(direction) + 11) + "\r")
-    sys.stderr.flush()
-    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
+    assert process.stdout is not None
+    output: list[str] = []
+    line: list[str] = []
+    last_percent = -1
+    while character := process.stdout.read(1):
+        output.append(character)
+        line.append(character)
+        if character in "\r\n":
+            last_percent = report_rsync_output(direction, "".join(line), last_percent)
+            line.clear()
+    if line:
+        report_rsync_output(direction, "".join(line), last_percent)
+    return subprocess.CompletedProcess(command, process.wait(), "".join(output), "")
 
 
 def local_repository(target: Target) -> tuple[Path, str, str, str] | None:
@@ -380,7 +397,14 @@ def prepare_server_repository(config: Config, target: Target) -> bool:
 
 
 def ensure_remote_directory(config: Config, target: Target) -> None:
-    run_remote(config, 'set -eu\nmkdir -p -- "$1"\n', remote_root(config, target))
+    script = '''set -eu
+base=$(realpath -e -- "$1")
+root=$2
+mkdir -p -- "$root"
+resolved=$(realpath -e -- "$root")
+case $resolved in "$base"/*) ;; *) echo "unsafe server destination: $root" >&2; exit 2 ;; esac
+'''
+    run_remote(config, script, config.base_path, remote_root(config, target))
 
 
 def sync_folder(config: Config, target: Target, direction: str, dry_run: bool) -> int:
