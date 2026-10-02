@@ -311,7 +311,10 @@ def run_rsync(command: list[str], direction: str) -> subprocess.CompletedProcess
     output: list[str] = []
     line: list[str] = []
     last_percent = -1
-    while character := process.stdout.read(1):
+    while True:
+        character = process.stdout.read(1)
+        if not character:
+            break
         output.append(character)
         line.append(character)
         if character in "\r\n":
